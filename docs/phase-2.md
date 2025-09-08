@@ -21,8 +21,7 @@ ecs-hello/
 Add `flask` to `requirements.txt` and run `pip install -r requirements.txt`
 
 `flask_app/app.py`
-
-src/app.py
+```python
 from flask import Flask
 
 app = Flask(__name__)

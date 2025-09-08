@@ -1,6 +1,102 @@
-# AWS ECS Fargate Phase 6 — Clean up, Cost Awareness, Autoscaling, and Advanced Security
+# AWS ECS Fargate Phase 5 — Clean up, Cost Awareness, Autoscaling, and Advanced Security
 
-## 1. Destroying Your CDK Application
+## 1. Autoscaling and Resource Requests/Limits in ECS
+
+### Resource Requests/Limits
+
+In ECS Fargate, you specify **CPU and memory** for each container in your task definition. This acts as both a request and a limit.
+
+```python
+container = task_def.add_container(
+    "FlaskContainer",
+    image=ecs.ContainerImage.from_docker_image_asset(image_asset),
+    cpu=256,  # 0.25 vCPU
+    memory_limit_mib=512,  # 512 MiB
+    logging=ecs.LogDriver.aws_logs(stream_prefix="flask"),
+)
+```
+
+### Service Autoscaling
+
+You can enable autoscaling for your ECS service based on CloudWatch metrics (e.g., CPU utilization):
+
+```python
+scaling = service.auto_scale_task_count(
+    min_capacity=1,
+    max_capacity=5,
+)
+
+scaling.scale_on_cpu_utilization(
+    "CpuScaling",
+    target_utilization_percent=50,
+)
+```
+
+- This will automatically adjust the number of running tasks to keep average CPU utilization near 50%.
+
+## 2. Example: Deploying AquaSec MicroEnforcer on ECS
+
+AquaSec MicroEnforcer can be deployed as a **sidecar container** in your ECS task definition.
+
+```python
+microenforcer_container = task_def.add_container(
+    "AquasecMicroEnforcer",
+    image=ecs.ContainerImage.from_registry("aquasec/microenforcer:latest"),
+    environment={
+        "AQUA_SERVER": "<your-aqua-server>",
+        "AQUA_TOKEN": "<your-aqua-token>",
+        # Add other required env vars
+    },
+    logging=ecs.LogDriver.aws_logs(stream_prefix="aquasec"),
+)
+```
+
+- Ensure your main app container and MicroEnforcer are in the same task definition.
+- Configure networking and IAM permissions as required by Aquasec.
+
+## 3. Application Tracing on ECS with Datadog via OpenTelemetry
+
+For distributed tracing with Datadog, use the **OpenTelemetry Collector** as a sidecar container and configure it to export traces to Datadog.
+
+```python
+otel_collector = task_def.add_container(
+    "OtelCollector",
+    image=ecs.ContainerImage.from_registry("otel/opentelemetry-collector-contrib:latest"),
+    environment={
+        "DD_API_KEY": "<your-datadog-api-key>",
+        # Add other required env vars for Datadog exporter
+    },
+    command=[
+        "--config=/etc/otel-collector-config.yaml"
+    ],
+    logging=ecs.LogDriver.aws_logs(stream_prefix="otel"),
+)
+```
+
+- Mount a configuration file (`otel-collector-config.yaml`) that sets up the Datadog exporter.
+- Instrument your application code with OpenTelemetry SDKs (Python: `opentelemetry-distro`, `opentelemetry-exporter-otlp`).
+- Ensure network access to Datadog endpoints.
+
+### Example OpenTelemetry Python Instrumentation
+
+```python
+from opentelemetry import trace
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+app = Flask(__name__)
+FlaskInstrumentor().instrument_app(app)
+
+trace.set_tracer_provider(TracerProvider())
+otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
+trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
+```
+
+- Adjust the OTLP exporter endpoint to match your collector configuration.
+
+## 4. Destroying Your CDK Application
 
 To cleanly remove all resources created by your CDK app:
 
@@ -12,7 +108,7 @@ cdk destroy
 - You may be prompted to confirm deletion.
 - **Tip:** Run `cdk list` to see all deployed stacks.
 
-## 2. Checking for Lingering Chargeable Resources
+## 5. Checking for Lingering Chargeable Resources
 
 After destroying, check for resources that may still incur charges:
 
@@ -88,105 +184,9 @@ aws ec2 describe-vpcs
 
 - Review the output and manually delete any chargeable resources not removed by CDK.
 
-## 3. Autoscaling and Resource Requests/Limits in ECS
-
-### Resource Requests/Limits
-
-In ECS Fargate, you specify **CPU and memory** for each container in your task definition. This acts as both a request and a limit.
-
-```python
-container = task_def.add_container(
-    "FlaskContainer",
-    image=ecs.ContainerImage.from_docker_image_asset(image_asset),
-    cpu=256,  # 0.25 vCPU
-    memory_limit_mib=512,  # 512 MiB
-    logging=ecs.LogDriver.aws_logs(stream_prefix="flask"),
-)
-```
-
-### Service Autoscaling
-
-You can enable autoscaling for your ECS service based on CloudWatch metrics (e.g., CPU utilization):
-
-```python
-scaling = service.auto_scale_task_count(
-    min_capacity=1,
-    max_capacity=5,
-)
-
-scaling.scale_on_cpu_utilization(
-    "CpuScaling",
-    target_utilization_percent=50,
-)
-```
-
-- This will automatically adjust the number of running tasks to keep average CPU utilization near 50%.
-
-## 4. Example: Deploying AquaSec MicroEnforcer on ECS
-
-AquaSec MicroEnforcer can be deployed as a **sidecar container** in your ECS task definition.
-
-```python
-microenforcer_container = task_def.add_container(
-    "AquasecMicroEnforcer",
-    image=ecs.ContainerImage.from_registry("aquasec/microenforcer:latest"),
-    environment={
-        "AQUA_SERVER": "<your-aqua-server>",
-        "AQUA_TOKEN": "<your-aqua-token>",
-        # Add other required env vars
-    },
-    logging=ecs.LogDriver.aws_logs(stream_prefix="aquasec"),
-)
-```
-
-- Ensure your main app container and MicroEnforcer are in the same task definition.
-- Configure networking and IAM permissions as required by Aquasec.
-
-## 5. Application Tracing on ECS with Datadog via OpenTelemetry
-
-For distributed tracing with Datadog, use the **OpenTelemetry Collector** as a sidecar container and configure it to export traces to Datadog.
-
-```python
-otel_collector = task_def.add_container(
-    "OtelCollector",
-    image=ecs.ContainerImage.from_registry("otel/opentelemetry-collector-contrib:latest"),
-    environment={
-        "DD_API_KEY": "<your-datadog-api-key>",
-        # Add other required env vars for Datadog exporter
-    },
-    command=[
-        "--config=/etc/otel-collector-config.yaml"
-    ],
-    logging=ecs.LogDriver.aws_logs(stream_prefix="otel"),
-)
-```
-
-- Mount a configuration file (`otel-collector-config.yaml`) that sets up the Datadog exporter.
-- Instrument your application code with OpenTelemetry SDKs (Python: `opentelemetry-distro`, `opentelemetry-exporter-otlp`).
-- Ensure network access to Datadog endpoints.
-
-### Example OpenTelemetry Python Instrumentation
-
-```python
-from opentelemetry import trace
-from opentelemetry.instrumentation.flask import FlaskInstrumentor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-app = Flask(__name__)
-FlaskInstrumentor().instrument_app(app)
-
-trace.set_tracer_provider(TracerProvider())
-otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
-trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
-```
-
-- Adjust the OTLP exporter endpoint to match your collector configuration.
-
 ## ✅ Result
 
-- You can destroy your app and check for lingering resources.
 - Learn how to set resource requests/limits and autoscaling for ECS
 - Example provided for deploying Aquasec MicroEnforcer on ECS.
 - Guidance for enabling application tracing with Datadog via OpenTelemetry Collector.
+- You can destroy your app and check for lingering resources.

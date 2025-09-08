@@ -132,4 +132,4 @@ You can also tag individual resources (e.g., VPC, ALB, ECS Service) similarly.
 - All container logs are sent to CloudWatch Logs.
 - ALB and ECS metrics are available in CloudWatch.
 - (Optional) Alarms can notify you of issues.
-- Resources are tagged for ownership, naming,
+- Resources are tagged for ownership, name and environment.
